@@ -255,19 +255,45 @@ interface TimeParser {
 
 ### `deterministic` (default)
 
-A small set of rule-based, Russian-friendly patterns
-(`src/nlp/deterministic-parser.ts`):
+Rule-based Russian patterns in `src/nlp/deterministic-parser.ts`.
+The parser **never guesses**: only the constructions below match; anything
+else yields `null` (record saved as a plain thought).
 
-- `через N минут/часов/дней` — relative offset from now.
-- `завтра в HH[:MM]` / `послезавтра в HH[:MM]` — absolute time on a known
-  future day.
-- `сегодня в HH[:MM]` — absolute time today, **only if that time hasn't
-  already passed**. If it has, the expression is treated as ambiguous
-  (the service refuses to silently roll it to "tomorrow").
+**Supported constructions**
 
-Anything else — including vague expressions like «вечером», bare
-«завтра» with no explicit time, or no time expression at all — resolves
-to `null`. The record is still saved; it's just a thought.
+1. **Relative day + optional time-of-day**
+   - `завтра` / `послезавтра` / `через N дней` (N integer; forms день/дня/дней)
+   - optional: `утром` | `в обед` | `вечером` | `в <time>`
+2. **Relative duration** — `через N часов` / `через N минут`
+   (forms час/часа/часов, минута/минуты/минут). Pure offset from now.
+3. **Weekday** — `в понедельник` … `в воскресенье` (accusative/nominative)
+   and short forms `пн`/`вт`/`ср`/`чт`/`пт`/`сб`/`вс`. Next occurrence from
+   now; same weekday with a time already past rolls to next week.
+4. **Day of month** — `15-го` / `15-е` / `15 числа` (bare digits alone are
+   not matched). That day this month if still upcoming at the resolved
+   time, else next month; if next month has no such day → `null`.
+
+**Default clock times** (local / system timezone, Europe/Minsk on the
+target host):
+
+| Phrase                         | Time  |
+|--------------------------------|-------|
+| Day only (завтра / в пятницу / 15-е / через N дней) | **10:00** |
+| `утром`                        | **09:00** |
+| `в обед`                       | **13:00** |
+| `вечером`                      | **19:00** |
+
+**Clock-time rules** for `в HH[:MM]` with optional `утра`/`вечера`:
+
+- No marker: 24-hour clock (`в 10` → 10:00, `в 15:30` → 15:30; hour 0–23).
+- `утра`: hour 1–11 as AM; `в 12 утра` → 00:00.
+- `вечера`: hour 1–11 → hour+12; `в 12 вечера` → 00:00.
+- Invalid hour/minute → `null` (not clamped).
+
+`сегодня` **requires** an explicit time-of-day (no 10:00 default). If that
+time has already passed today, the result is `null` (no silent roll to
+tomorrow). Standalone vague words like «вечером» / «утром» without a day
+anchor also resolve to `null`.
 
 ### `qwen` (future hook, not implemented)
 
