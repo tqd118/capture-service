@@ -39,7 +39,10 @@ test('parseRequest rejects wrong kind', () => {
 
 test('every declared operation has a payload schema wired up', () => {
   for (const operation of OPERATIONS) {
-    const payload = operation === 'record.create' ? { text: 'x' } : operation === 'record.list' ? {} : { id: 'x' };
+    let payload: unknown;
+    if (operation === 'record.create' || operation === 'nlp.parse') payload = { text: 'x' };
+    else if (operation === 'record.list') payload = {};
+    else payload = { id: 'x' };
     assert.doesNotThrow(() => parsePayload(operation, payload), `operation ${operation} should accept a minimal valid payload`);
   }
 });
@@ -72,4 +75,9 @@ test('failure() produces the documented error envelope', () => {
     ok: false,
     error: { code: 'VALIDATION_ERROR', message: 'bad input' },
   });
+});
+
+test('nlp.parse requires non-empty text', () => {
+  assert.throws(() => parsePayload('nlp.parse', { text: '' }), ValidationError);
+  assert.doesNotThrow(() => parsePayload('nlp.parse', { text: 'завтра в 10' }));
 });

@@ -15,6 +15,10 @@ export const listFiltersSchema = z.object({
   includeArchived: z.boolean().optional(),
 });
 
+export const nlpParseSchema = z.object({
+  text: z.string().min(1).max(config.limits.text),
+});
+
 export const createRecordSchema = z.object({
   text: z.string().min(1).max(config.limits.text),
   remindAt: isoDateTime.nullable().optional(),

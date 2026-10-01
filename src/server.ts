@@ -128,6 +128,8 @@ export class CaptureServer {
         return this.records.markDone(payload.id);
       case 'record.archive':
         return this.records.archive(payload.id);
+      case 'nlp.parse':
+        return this.records.parsePreview(payload.text);
     }
   }
 

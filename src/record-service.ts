@@ -164,6 +164,18 @@ export class RecordService {
     return next;
   }
 
+
+  /** Preview-only parse: same NLP path as create, no DB write. */
+  async parsePreview(text: string): Promise<{ remindAt: string | null }> {
+    const trimmed = text.trim();
+    if (!trimmed) return { remindAt: null };
+    if (trimmed.length > config.limits.text) {
+      throw new ValidationError(`text exceeds maximum length of ${config.limits.text} characters`);
+    }
+    const parsed = await this.safeParseTime(trimmed);
+    return { remindAt: parsed ? parsed.toISOString() : null };
+  }
+
   private async safeParseTime(text: string): Promise<Date | null> {
     try {
       return await this.timeParser.parseTimeExpression(text, new Date());

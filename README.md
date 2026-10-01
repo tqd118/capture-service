@@ -214,6 +214,14 @@ twice keeps the original timestamp).
 Payload: `{ "id": "uuid" }`. Sets `archivedAt` to now (idempotent, same as
 above).
 
+#### `nlp.parse`
+
+Payload: `{ "text": "string, required" }`.
+
+Preview-only time parse using the same NLP path as `record.create`. Returns
+`{ "remindAt": "<ISO 8601>" | null }` and does not write to the database.
+Intended for live UI chips (debounced client-side).
+
 ## Scheduler
 
 Mirrors the legacy service's approach: a single `setTimeout` is kept

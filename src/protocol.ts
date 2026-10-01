@@ -3,6 +3,7 @@ import {
   createRecordSchema,
   idSchema,
   listFiltersSchema,
+  nlpParseSchema,
   parse,
   updateRecordSchema,
 } from './validation.js';
@@ -15,6 +16,7 @@ export const OPERATIONS = [
   'record.delete',
   'record.markDone',
   'record.archive',
+  'nlp.parse',
 ] as const;
 
 export type Operation = (typeof OPERATIONS)[number];
@@ -45,6 +47,8 @@ export function parsePayload(operation: Operation, payload: unknown): unknown {
       return parse(idSchema, payload, `Invalid ${operation} payload`);
     case 'record.update':
       return parse(updateRecordSchema, payload, 'Invalid record.update payload');
+    case 'nlp.parse':
+      return parse(nlpParseSchema, payload, 'Invalid nlp.parse payload');
   }
 }
 
