@@ -10,6 +10,9 @@ import type { Record } from './types.js';
  * default. No cloud push, no email — purely local, matching the manifesto's
  * "shell-native" principle. Failures are logged but never crash the service;
  * the WebSocket `record.reminded` event is the reliable signal either way.
+ *
+ * `record.text` is passed after `--` so a leading `-` in user text cannot be
+ * interpreted as a notify-send option.
  */
 export function notify(record: Record): void {
   if (config.notifyDisabled) {
@@ -17,7 +20,7 @@ export function notify(record: Record): void {
     return;
   }
 
-  const args = ['-a', 'capture', 'Capture reminder', record.text];
+  const args = ['-a', 'capture', 'Capture reminder', '--', record.text];
   execFile(config.notifyCommand, args, (error) => {
     if (error) {
       logger.high(`Failed to send desktop notification for record ${record.id}: ${error.message}`);
