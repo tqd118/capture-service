@@ -32,6 +32,11 @@ export const updateRecordSchema = z.object({
   archivedAt: isoDateTime.nullable().optional(),
 });
 
+export const snoozeReminderSchema = z.object({
+  id: z.string().min(1).max(128),
+  preset: z.enum(['15m', '1h', 'tomorrow']),
+});
+
 export function parse<T>(schema: ZodSchema<T>, raw: unknown, errorPrefix: string): T {
   try {
     return schema.parse(raw);

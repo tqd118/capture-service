@@ -5,7 +5,8 @@ import { DomainEvents } from './events.js';
 import { NotFoundError, ValidationError } from './errors.js';
 import { logger } from './logger.js';
 import type { TimeParser } from './nlp/index.js';
-import type { Record, RecordListFilters } from './types.js';
+import { computeSnoozeRemindAt } from './snooze.js';
+import type { Record, RecordListFilters, SnoozePreset } from './types.js';
 
 interface RecordRow {
   id: string;
@@ -15,10 +16,14 @@ interface RecordRow {
   doneAt: string | null;
   archivedAt: string | null;
   remindedAt: string | null;
+  reminderDismissedAt: string | null;
 }
 
 function rowToRecord(row: RecordRow): Record {
-  return { ...row };
+  return {
+    ...row,
+    reminderDismissedAt: row.reminderDismissedAt ?? null,
+  };
 }
 
 export interface CreateRecordInput {
@@ -66,12 +71,13 @@ export class RecordService {
       doneAt: null,
       archivedAt: null,
       remindedAt: null,
+      reminderDismissedAt: null,
     };
 
     this.db
       .prepare(
-        `INSERT INTO records (id, text, createdAt, remindAt, doneAt, archivedAt, remindedAt)
-         VALUES (@id, @text, @createdAt, @remindAt, @doneAt, @archivedAt, @remindedAt)`,
+        `INSERT INTO records (id, text, createdAt, remindAt, doneAt, archivedAt, remindedAt, reminderDismissedAt)
+         VALUES (@id, @text, @createdAt, @remindAt, @doneAt, @archivedAt, @remindedAt, @reminderDismissedAt)`,
       )
       .run(record);
 
@@ -109,19 +115,15 @@ export class RecordService {
     }
     if (patch.remindAt !== undefined) {
       next.remindAt = patch.remindAt;
-      // Changing the reminder time invalidates any previous "already fired" state.
+      // Changing the reminder time invalidates any previous fire/ack state
+      // so the scheduler can fire again and the drawer can show it.
       next.remindedAt = null;
+      next.reminderDismissedAt = null;
     }
     if (patch.doneAt !== undefined) next.doneAt = patch.doneAt;
     if (patch.archivedAt !== undefined) next.archivedAt = patch.archivedAt;
 
-    this.db
-      .prepare(
-        `UPDATE records SET text = @text, remindAt = @remindAt, doneAt = @doneAt,
-         archivedAt = @archivedAt, remindedAt = @remindedAt WHERE id = @id`,
-      )
-      .run(next);
-
+    this.persist(next);
     logger.low(`Updated record ${id}`);
     this.events.emitEvent('record.updated', { type: 'record.updated', record: next });
     return next;
@@ -159,11 +161,77 @@ export class RecordService {
 
   markReminded(id: string): Record {
     const existing = this.get(id);
-    const next: Record = { ...existing, remindedAt: new Date().toISOString() };
-    this.db.prepare('UPDATE records SET remindedAt = @remindedAt WHERE id = @id').run(next);
+    const next: Record = {
+      ...existing,
+      remindedAt: new Date().toISOString(),
+      // A fresh fire clears any stale dismiss from a previous cycle.
+      reminderDismissedAt: null,
+    };
+    this.db
+      .prepare('UPDATE records SET remindedAt = @remindedAt, reminderDismissedAt = @reminderDismissedAt WHERE id = @id')
+      .run(next);
     return next;
   }
 
+  /**
+   * Fired reminders waiting for an in-app reaction (ok / dismiss / snooze).
+   * Survives UI restart — clients should call this on reconnect instead of
+   * relying on event replay.
+   */
+  listPendingReminders(): Record[] {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM records
+         WHERE remindedAt IS NOT NULL
+           AND reminderDismissedAt IS NULL
+           AND doneAt IS NULL
+           AND archivedAt IS NULL
+         ORDER BY remindedAt ASC`,
+      )
+      .all() as RecordRow[];
+    return rows.map(rowToRecord);
+  }
+
+  /** Ack-close the in-app notification; record stays, will not reappear until a new remind cycle. */
+  dismissReminder(id: string): Record {
+    const existing = this.get(id);
+    if (!existing.remindedAt) {
+      throw new ValidationError(`record ${id} has no pending reminder to dismiss`);
+    }
+    if (existing.reminderDismissedAt) {
+      return existing;
+    }
+    const next: Record = { ...existing, reminderDismissedAt: new Date().toISOString() };
+    this.persist(next);
+    logger.low(`Dismissed reminder for record ${id}`);
+    this.events.emitEvent('record.updated', { type: 'record.updated', record: next });
+    return next;
+  }
+
+  /** Close notification and delete the record. */
+  okReminder(id: string): { id: string } {
+    this.delete(id);
+    return { id };
+  }
+
+  /** Push remindAt forward by a fixed preset; clears fire/ack so the scheduler can fire again. */
+  snoozeReminder(id: string, preset: SnoozePreset): Record {
+    const existing = this.get(id);
+    if (!existing.remindedAt && !existing.remindAt) {
+      throw new ValidationError(`record ${id} has nothing to snooze`);
+    }
+    const remindAt = computeSnoozeRemindAt(preset).toISOString();
+    const next: Record = {
+      ...existing,
+      remindAt,
+      remindedAt: null,
+      reminderDismissedAt: null,
+    };
+    this.persist(next);
+    logger.low(`Snoozed reminder for record ${id} (${preset}) → ${remindAt}`);
+    this.events.emitEvent('record.updated', { type: 'record.updated', record: next });
+    return next;
+  }
 
   /** Preview-only parse: same NLP path as create, no DB write. */
   async parsePreview(text: string): Promise<{ remindAt: string | null }> {
@@ -174,6 +242,16 @@ export class RecordService {
     }
     const parsed = await this.safeParseTime(trimmed);
     return { remindAt: parsed ? parsed.toISOString() : null };
+  }
+
+  private persist(record: Record): void {
+    this.db
+      .prepare(
+        `UPDATE records SET text = @text, remindAt = @remindAt, doneAt = @doneAt,
+         archivedAt = @archivedAt, remindedAt = @remindedAt, reminderDismissedAt = @reminderDismissedAt
+         WHERE id = @id`,
+      )
+      .run(record);
   }
 
   private async safeParseTime(text: string): Promise<Date | null> {

@@ -130,6 +130,14 @@ export class CaptureServer {
         return this.records.archive(payload.id);
       case 'nlp.parse':
         return this.records.parsePreview(payload.text);
+      case 'reminder.listPending':
+        return this.records.listPendingReminders();
+      case 'reminder.dismiss':
+        return this.records.dismissReminder(payload.id);
+      case 'reminder.ok':
+        return this.records.okReminder(payload.id);
+      case 'reminder.snooze':
+        return this.records.snoozeReminder(payload.id, payload.preset);
     }
   }
 

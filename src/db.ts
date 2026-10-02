@@ -12,10 +12,20 @@ CREATE TABLE IF NOT EXISTS records (
   remindAt TEXT,
   doneAt TEXT,
   archivedAt TEXT,
-  remindedAt TEXT
+  remindedAt TEXT,
+  reminderDismissedAt TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_records_remindAt ON records(remindAt);
 `;
+
+function migrate(db: Database.Database): void {
+  const columns = db.prepare(`PRAGMA table_info(records)`).all() as Array<{ name: string }>;
+  const names = new Set(columns.map((column) => column.name));
+  if (!names.has('reminderDismissedAt')) {
+    db.exec('ALTER TABLE records ADD COLUMN reminderDismissedAt TEXT');
+    logger.medium('Migrated records table: added reminderDismissedAt column');
+  }
+}
 
 export class CaptureDb {
   readonly raw: Database.Database;
@@ -33,6 +43,7 @@ export class CaptureDb {
     this.raw.pragma('journal_mode = WAL');
     this.raw.pragma('foreign_keys = ON');
     this.raw.exec(SCHEMA);
+    migrate(this.raw);
 
     try {
       fs.chmodSync(dbPath, 0o600);
