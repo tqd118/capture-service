@@ -53,7 +53,8 @@ CREATE TABLE records (
   remindAt TEXT,               -- ISO 8601 or NULL
   doneAt TEXT,                 -- ISO 8601 or NULL
   archivedAt TEXT,             -- ISO 8601 or NULL
-  remindedAt TEXT              -- ISO 8601 or NULL; internal only, see below
+  remindedAt TEXT,             -- ISO 8601 or NULL; internal only, see below
+  reminderDismissedAt TEXT     -- ISO 8601 or NULL; ack for in-app notification
 );
 ```
 
@@ -62,6 +63,13 @@ purely so that a reminder fires **exactly once** even across service
 restarts (if the process restarts after a reminder already fired, it will
 not fire again). It is returned on the wire like any other field in case a
 future client finds it useful, but clients should not need to set it.
+
+`reminderDismissedAt` is the durable ack for the in-app drawer notification.
+A reminder is **pending** (show in the drawer / return from
+`reminder.listPending`) when `remindedAt` is set, `reminderDismissedAt` is
+null, and the record is not done/archived. Dismiss sets the ack without
+deleting; snooze / a new `remindAt` clears both fire and ack so the
+scheduler can fire again.
 
 ## Running
 
@@ -90,8 +98,8 @@ npm test
 | `CAPTURE_PORT`            | `17343`                  | WebSocket port. Deliberately different from the legacy notes service's `17342` so both can run side by side during migration. |
 | `CAPTURE_NLP_PROVIDER`    | `deterministic`          | `deterministic` or `qwen` (see [NLP layer](#nlp-layer)).               |
 | `CAPTURE_QWEN_URL`        | unset                    | HTTP endpoint for a future local Qwen3-4B parser. Unused today.        |
-| `CAPTURE_NOTIFY_CMD`      | `notify-send`            | Command used to raise desktop notifications.                           |
-| `CAPTURE_NOTIFY_DISABLE`  | unset                    | Set to `1` to skip firing desktop notifications (still emits the WebSocket event). Useful for headless dev/test. |
+| `CAPTURE_NOTIFY_CMD`      | `notify-send`            | Command used when desktop notifications are enabled.                   |
+| `CAPTURE_NOTIFY_ENABLE`   | unset                    | Set to `1` to also shell out to `notify-send` on fire. **Off by default** — the WebSocket event + `reminder.listPending` are the primary channel. |
 
 ## WebSocket protocol
 
@@ -197,8 +205,9 @@ Payload:
 }
 ```
 
-Changing `remindAt` resets the internal "already reminded" state, so a
-record can be reminded again if the user pushes the time forward.
+Changing `remindAt` resets the internal fire/ack state (`remindedAt` and
+`reminderDismissedAt`), so a record can be reminded again if the user
+pushes the time forward.
 
 #### `record.delete`
 
@@ -222,6 +231,52 @@ Preview-only time parse using the same NLP path as `record.create`. Returns
 `{ "remindAt": "<ISO 8601>" | null }` and does not write to the database.
 Intended for live UI chips (debounced client-side).
 
+#### `reminder.listPending`
+
+Payload: `{}` (or omit).
+
+Returns records that have fired and are waiting for an in-app reaction:
+`remindedAt IS NOT NULL AND reminderDismissedAt IS NULL AND doneAt IS NULL
+AND archivedAt IS NULL`, ordered by `remindedAt` ascending. Call this on
+UI reconnect — events are not replayed.
+
+#### `reminder.dismiss`
+
+Payload: `{ "id": "uuid" }`.
+
+Ack-closes the notification: sets `reminderDismissedAt` to now. The record
+stays in the DB and will **not** reappear in `listPending` until a new
+remind cycle (snooze or a fresh `remindAt`). Idempotent if already
+dismissed. Errors if the reminder has not fired yet.
+
+#### `reminder.ok`
+
+Payload: `{ "id": "uuid" }`.
+
+Closes the notification **and deletes** the record (same effect as
+`record.delete`). Emits `record.deleted`.
+
+#### `reminder.snooze`
+
+Payload:
+
+```json
+{ "id": "uuid", "preset": "15m" | "1h" | "tomorrow" }
+```
+
+Presets (server-side, system local timezone / Europe/Minsk on the target
+host):
+
+| Preset      | Effect                                      |
+|-------------|---------------------------------------------|
+| `15m`       | `now + 15 minutes`                          |
+| `1h`        | `now + 1 hour`                              |
+| `tomorrow`  | next calendar day at **10:00** local        |
+
+Sets `remindAt` to the resolved time and clears `remindedAt` /
+`reminderDismissedAt` so the scheduler can fire again. Emits
+`record.updated`.
+
 ## Scheduler
 
 Mirrors the legacy service's approach: a single `setTimeout` is kept
@@ -238,14 +293,22 @@ silently skipped — reliability over cleverness.
 
 On fire, the service:
 
-1. Marks the record as reminded (`remindedAt`) so it never fires twice.
-2. Emits the `record.reminded` WebSocket event to all connected clients.
-3. Shells out to `notify-send -a capture "Capture reminder" "<text>"`
-   (Linux desktop notification). Override the command with
-   `CAPTURE_NOTIFY_CMD`, or disable it entirely with
-   `CAPTURE_NOTIFY_DISABLE=1`. A failure to notify is logged but never
-   crashes the service or blocks the WebSocket event — the event is the
-   reliable signal.
+1. Marks the record as reminded (`remindedAt`) so it never fires twice,
+   and clears any stale `reminderDismissedAt`.
+2. Emits the `record.reminded` WebSocket event to all connected clients
+   (primary channel for the in-app drawer).
+3. Optionally shells out to `notify-send` **only if**
+   `CAPTURE_NOTIFY_ENABLE=1`. Desktop notify is **off by default** so
+   reminders are not lost in the OS tray — the drawer +
+   `reminder.listPending` on reconnect are the durable path. Override the
+   command with `CAPTURE_NOTIFY_CMD` when enabled. A failure to notify is
+   logged but never crashes the service or blocks the WebSocket event.
+
+Client reactions (separate from the fire path):
+
+- `reminder.dismiss` — ack close (record kept)
+- `reminder.ok` — delete record
+- `reminder.snooze` — preset reschedule
 
 No cloud push, no email, no mobile notifications — purely local, matching
 the manifesto's "shell-native" principle.

@@ -17,6 +17,7 @@ function makeRecord(overrides: Partial<Record> = {}): Record {
     doneAt: null,
     archivedAt: null,
     remindedAt: null,
+    reminderDismissedAt: null,
     ...overrides,
   };
 }

@@ -5,6 +5,7 @@ import {
   listFiltersSchema,
   nlpParseSchema,
   parse,
+  snoozeReminderSchema,
   updateRecordSchema,
 } from './validation.js';
 
@@ -17,6 +18,10 @@ export const OPERATIONS = [
   'record.markDone',
   'record.archive',
   'nlp.parse',
+  'reminder.listPending',
+  'reminder.dismiss',
+  'reminder.ok',
+  'reminder.snooze',
 ] as const;
 
 export type Operation = (typeof OPERATIONS)[number];
@@ -44,11 +49,17 @@ export function parsePayload(operation: Operation, payload: unknown): unknown {
     case 'record.delete':
     case 'record.markDone':
     case 'record.archive':
+    case 'reminder.dismiss':
+    case 'reminder.ok':
       return parse(idSchema, payload, `Invalid ${operation} payload`);
     case 'record.update':
       return parse(updateRecordSchema, payload, 'Invalid record.update payload');
     case 'nlp.parse':
       return parse(nlpParseSchema, payload, 'Invalid nlp.parse payload');
+    case 'reminder.listPending':
+      return parse(z.object({}).strict(), payload ?? {}, 'Invalid reminder.listPending payload');
+    case 'reminder.snooze':
+      return parse(snoozeReminderSchema, payload, 'Invalid reminder.snooze payload');
   }
 }
 

@@ -41,7 +41,8 @@ test('every declared operation has a payload schema wired up', () => {
   for (const operation of OPERATIONS) {
     let payload: unknown;
     if (operation === 'record.create' || operation === 'nlp.parse') payload = { text: 'x' };
-    else if (operation === 'record.list') payload = {};
+    else if (operation === 'record.list' || operation === 'reminder.listPending') payload = {};
+    else if (operation === 'reminder.snooze') payload = { id: 'x', preset: '15m' };
     else payload = { id: 'x' };
     assert.doesNotThrow(() => parsePayload(operation, payload), `operation ${operation} should accept a minimal valid payload`);
   }
@@ -80,4 +81,19 @@ test('failure() produces the documented error envelope', () => {
 test('nlp.parse requires non-empty text', () => {
   assert.throws(() => parsePayload('nlp.parse', { text: '' }), ValidationError);
   assert.doesNotThrow(() => parsePayload('nlp.parse', { text: 'завтра в 10' }));
+});
+
+test('reminder.snooze requires a known preset', () => {
+  assert.throws(() => parsePayload('reminder.snooze', { id: 'x', preset: '2h' }), ValidationError);
+  assert.doesNotThrow(() => parsePayload('reminder.snooze', { id: 'x', preset: 'tomorrow' }));
+});
+
+test('reminder.listPending accepts empty/missing payload', () => {
+  assert.doesNotThrow(() => parsePayload('reminder.listPending', {}));
+  assert.doesNotThrow(() => parsePayload('reminder.listPending', undefined));
+});
+
+test('reminder.dismiss and reminder.ok require an id', () => {
+  assert.throws(() => parsePayload('reminder.dismiss', {}), ValidationError);
+  assert.doesNotThrow(() => parsePayload('reminder.ok', { id: 'abc' }));
 });

@@ -4,15 +4,15 @@ import { logger } from './logger.js';
 import type { Record } from './types.js';
 
 /**
- * Fires a local desktop notification for a due reminder.
+ * Optional local desktop notification for a due reminder.
  *
- * Linux: shells out to `notify-send` (or CAPTURE_NOTIFY_CMD override) by
- * default. No cloud push, no email — purely local, matching the manifesto's
- * "shell-native" principle. Failures are logged but never crash the service;
- * the WebSocket `record.reminded` event is the reliable signal either way.
+ * Disabled by default — the reliable channel is the WebSocket
+ * `record.reminded` event plus `reminder.listPending` on reconnect (in-app
+ * drawer). Opt in with CAPTURE_NOTIFY_ENABLE=1.
  *
- * `record.text` is passed after `--` so a leading `-` in user text cannot be
- * interpreted as a notify-send option.
+ * When enabled: shells out to `notify-send` (or CAPTURE_NOTIFY_CMD). Failures
+ * are logged but never crash the service. `record.text` is passed after `--`
+ * so a leading `-` cannot be interpreted as a notify-send option.
  */
 export function notify(record: Record): void {
   if (config.notifyDisabled) {
